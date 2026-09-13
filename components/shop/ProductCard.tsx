@@ -1,17 +1,14 @@
 'use client';
 
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Plus } from 'lucide-react';
 import type { Product } from '@/lib/products';
 import { useCart } from '@/lib/cart';
 import { useToast } from '@/components/ui/Toast';
-import { useAdminSession } from '@/lib/admin-session';
 
 export function ProductCard({ product }: { product: Product }) {
   const { addItem } = useCart();
   const { notify } = useToast();
-  const { isAdmin } = useAdminSession();
   const router = useRouter();
 
   const buyNow = () => {
@@ -61,32 +58,23 @@ export function ProductCard({ product }: { product: Product }) {
         <span className="block text-lg font-medium text-neutral-900 dark:text-white">
           ${product.price.toFixed(2)}
         </span>
-        {isAdmin ? (
-          <Link
-            href="/admin"
-            className="block w-full rounded-lg border border-neutral-300/70 bg-white/60 px-3 py-2 text-center text-sm font-medium text-neutral-700 dark:border-neutral-600 dark:bg-neutral-800/60 dark:text-neutral-200"
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={onAdd}
+            className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg border border-neutral-300/70 bg-white/60 px-3 py-2 text-sm font-medium text-neutral-800 transition-colors hover:border-orange-300 dark:border-neutral-600 dark:bg-neutral-800/60 dark:text-white"
           >
-            Manage in admin
-          </Link>
-        ) : (
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={onAdd}
-              className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg border border-neutral-300/70 bg-white/60 px-3 py-2 text-sm font-medium text-neutral-800 transition-colors hover:border-orange-300 dark:border-neutral-600 dark:bg-neutral-800/60 dark:text-white"
-            >
-              <Plus className="h-4 w-4" />
-              Add to cart
-            </button>
-            <button
-              type="button"
-              onClick={buyNow}
-              className="inline-flex flex-1 items-center justify-center rounded-lg bg-orange-500 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-orange-600"
-            >
-              Buy now
-            </button>
-          </div>
-        )}
+            <Plus className="h-4 w-4" />
+            Add to cart
+          </button>
+          <button
+            type="button"
+            onClick={buyNow}
+            className="inline-flex flex-1 items-center justify-center rounded-lg bg-orange-500 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-orange-600"
+          >
+            Buy now
+          </button>
+        </div>
       </div>
     </article>
   );
