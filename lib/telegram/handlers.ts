@@ -16,8 +16,11 @@ import { initializePaystackTransaction, isPaystackSecretConfigured } from '@/lib
 import {
   answerCallbackQuery,
   chunkButtons,
+  ensureBotCommands,
   getSiteUrl,
   mainMenuKeyboard,
+  NAV_LABELS,
+  navReplyKeyboard,
   sendMessage,
   sendPhoto,
   type InlineKeyboard,
@@ -70,14 +73,54 @@ async function findProduct(productId: string): Promise<CatalogProduct | null> {
 }
 
 async function showWelcome(chatId: number, name?: string) {
+  try {
+    await ensureBotCommands();
+  } catch {
+    // Commands are best-effort; navigation still works via buttons.
+  }
+
   const greeting = name ? `Hi ${escapeHtml(name)}` : 'Welcome';
   await sendMessage(
     chatId,
     [
       `<b>${greeting} — ByteStore</b>`,
       '',
-      'Browse digital products and checkout here with <b>Paystack</b> (card / MoMo) or <b>crypto</b>.',
-      'Delivery goes to the email you provide.',
+      'Buy digital products here with <b>Paystack</b> (card / MoMo) or <b>crypto</b>.',
+      'We deliver to the email you provide.',
+      '',
+      '<b>Quick start</b>',
+      '1. Tap <b>Browse shop</b>',
+      '2. Pick a category and product',
+      '3. Enter your email and pay',
+      '',
+      'Use the buttons below anytime — or type /help.',
+    ].join('\n'),
+    navReplyKeyboard(),
+  );
+  await sendMessage(chatId, 'What would you like to do?', {
+    inline_keyboard: mainMenuKeyboard(),
+  });
+}
+
+async function showHelp(chatId: number) {
+  const site = getSiteUrl();
+  await sendMessage(
+    chatId,
+    [
+      '<b>How to buy on ByteStore</b>',
+      '',
+      '• <b>Browse shop</b> — categories → products → Buy now',
+      '• Enter your <b>delivery email</b>',
+      '• Pay with <b>Paystack</b> or <b>crypto</b>',
+      '• Track purchases with <b>My orders</b>',
+      '',
+      '<b>Commands</b> (optional)',
+      '/start — main menu',
+      '/shop — browse products',
+      '/orders — your orders',
+      '/help — this guide',
+      '',
+      `Website: ${escapeHtml(site)}`,
     ].join('\n'),
     { inline_keyboard: mainMenuKeyboard() },
   );
@@ -547,10 +590,16 @@ export async function handleTelegramUpdate(update: TelegramUpdate) {
       await showOrders(chatId);
       return;
     }
+    if (data === 'help') {
+      await showHelp(chatId);
+      return;
+    }
     if (data === 'email') {
       const session = await getTelegramSession(chatId);
       await setTelegramSession(chatId, { ...session, awaiting: 'email' });
-      await sendMessage(chatId, 'Send your delivery email.');
+      await sendMessage(chatId, 'Send your delivery email.', {
+        inline_keyboard: [[{ text: '« Menu', callback_data: 'menu' }]],
+      });
       return;
     }
     if (data.startsWith('cat:')) {
@@ -583,7 +632,9 @@ export async function handleTelegramUpdate(update: TelegramUpdate) {
       return;
     }
 
-    await sendMessage(chatId, 'Unknown action. Use /start.');
+    await sendMessage(chatId, 'Unknown action. Tap Main menu or /start.', {
+      inline_keyboard: mainMenuKeyboard(),
+    });
     return;
   }
 
@@ -597,27 +648,20 @@ export async function handleTelegramUpdate(update: TelegramUpdate) {
     await showWelcome(chatId, message.from?.first_name);
     return;
   }
-  if (text === '/shop') {
+  if (text === '/shop' || text === NAV_LABELS.shop) {
     await showCategories(chatId);
     return;
   }
-  if (text === '/orders') {
+  if (text === '/orders' || text === NAV_LABELS.orders) {
     await showOrders(chatId);
     return;
   }
-  if (text === '/help') {
-    await sendMessage(
-      chatId,
-      [
-        '<b>ByteStore bot</b>',
-        '/start — main menu',
-        '/shop — browse products',
-        '/orders — look up your orders',
-        '',
-        'Pay with Paystack or crypto. Digital goods are emailed after confirmation.',
-      ].join('\n'),
-      { inline_keyboard: mainMenuKeyboard() },
-    );
+  if (text === '/help' || text === NAV_LABELS.help) {
+    await showHelp(chatId);
+    return;
+  }
+  if (text === NAV_LABELS.menu) {
+    await showWelcome(chatId, message.from?.first_name);
     return;
   }
 
@@ -629,7 +673,7 @@ export async function handleTelegramUpdate(update: TelegramUpdate) {
 
   await sendMessage(
     chatId,
-    'Use the buttons below, or /shop to browse.',
+    'Tap a button below to continue — or /help if you are new.',
     { inline_keyboard: mainMenuKeyboard() },
   );
 }

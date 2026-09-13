@@ -28,6 +28,8 @@ type InlineKeyboardButton = {
 
 export type InlineKeyboard = InlineKeyboardButton[][];
 
+export type ReplyKeyboard = { text: string }[][];
+
 async function telegramCall<T>(
   method: string,
   body: Record<string, unknown>,
@@ -57,7 +59,13 @@ async function telegramCall<T>(
 export async function sendMessage(
   chatId: number,
   text: string,
-  replyMarkup?: { inline_keyboard: InlineKeyboard },
+  replyMarkup?:
+    | { inline_keyboard: InlineKeyboard }
+    | {
+        keyboard: ReplyKeyboard;
+        resize_keyboard?: boolean;
+        is_persistent?: boolean;
+      },
 ) {
   return telegramCall('sendMessage', {
     chat_id: chatId,
@@ -93,12 +101,50 @@ export async function answerCallbackQuery(
   });
 }
 
+/** Registers the / menu commands shown in Telegram clients. */
+export async function ensureBotCommands() {
+  return telegramCall('setMyCommands', {
+    commands: [
+      { command: 'start', description: 'Open main menu' },
+      { command: 'shop', description: 'Browse products' },
+      { command: 'orders', description: 'View your orders' },
+      { command: 'help', description: 'How to buy' },
+    ],
+  });
+}
+
 export function mainMenuKeyboard(): InlineKeyboard {
   return [
     [{ text: 'Browse shop', callback_data: 'shop' }],
-    [{ text: 'My orders', callback_data: 'orders' }],
+    [
+      { text: 'My orders', callback_data: 'orders' },
+      { text: 'How to buy', callback_data: 'help' },
+    ],
   ];
 }
+
+/** Persistent bottom keyboard so users can navigate without typing commands. */
+export function navReplyKeyboard(): {
+  keyboard: ReplyKeyboard;
+  resize_keyboard: boolean;
+  is_persistent: boolean;
+} {
+  return {
+    keyboard: [
+      [{ text: 'Browse shop' }, { text: 'My orders' }],
+      [{ text: 'How to buy' }, { text: 'Main menu' }],
+    ],
+    resize_keyboard: true,
+    is_persistent: true,
+  };
+}
+
+export const NAV_LABELS = {
+  shop: 'Browse shop',
+  orders: 'My orders',
+  help: 'How to buy',
+  menu: 'Main menu',
+} as const;
 
 export function chunkButtons(
   buttons: InlineKeyboardButton[],

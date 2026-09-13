@@ -26,6 +26,10 @@ export const metadata: Metadata = {
   },
   description:
     'ByteStore — digital products shop. Proxies, phone numbers, SIP, API keys, SMTP, and call center systems with secure checkout and email delivery.',
+  icons: {
+    icon: [{ url: '/icon.png', type: 'image/png' }],
+    apple: [{ url: '/apple-icon.png', type: 'image/png' }],
+  },
 };
 
 export default function RootLayout({
