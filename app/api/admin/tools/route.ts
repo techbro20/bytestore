@@ -4,12 +4,18 @@ import { randomUUID } from 'crypto';
 import { isDbConfigured } from '@/lib/db';
 import {
   deleteTool,
+  ensureToolsCategory,
+  insertProduct,
   insertTool,
   isValidAdminToken,
+  makeProductSlug,
   readCatalog,
   updateTool,
+  type CatalogProduct,
   type CatalogTool,
 } from '@/lib/catalog-store';
+import { announceProductUpdate } from '@/lib/telegram/announce';
+import { TOOLS_CATEGORY } from '@/lib/tools-category';
 
 export const dynamic = 'force-dynamic';
 
@@ -76,6 +82,49 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
   return NextResponse.json({ ok: true, tool });
+}
+
+/** Converts an old link-only tool into a priced product in the Tools category. */
+export async function PATCH(request: Request) {
+  if (!(await requireAdmin())) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  const dbError = requireDb();
+  if (dbError) return dbError;
+
+  const body = (await request.json()) as { id?: string; price?: number };
+  const price = Math.round(Number(body.price) * 100) / 100;
+  if (!body.id) {
+    return NextResponse.json({ error: 'id required' }, { status: 400 });
+  }
+  if (!(price > 0)) {
+    return NextResponse.json({ error: 'Enter a price greater than 0' }, { status: 400 });
+  }
+
+  const catalog = await readCatalog();
+  const tool = catalog.tools.find((t) => t.id === body.id);
+  if (!tool) {
+    return NextResponse.json({ error: 'Tool not found' }, { status: 404 });
+  }
+
+  await ensureToolsCategory();
+  const product: CatalogProduct = {
+    id: randomUUID(),
+    slug: makeProductSlug(tool.title, catalog.products),
+    title: tool.title,
+    description: tool.body,
+    category: TOOLS_CATEGORY.slug,
+    price,
+    bestseller: false,
+    newArrival: false,
+    content: '',
+    image: tool.image || '',
+  };
+  await insertProduct(product);
+  await deleteTool(tool.id);
+  void announceProductUpdate(product, 'new');
+
+  return NextResponse.json({ ok: true, product });
 }
 
 export async function DELETE(request: Request) {

@@ -48,6 +48,7 @@ export default function AdminDashboard() {
     [],
   );
   const [productForm, setProductForm] = useState(emptyProduct);
+  const [convertPrices, setConvertPrices] = useState<Record<string, string>>({});
   const isToolsTab = tab === 'tools';
   const shopCategories = categories.filter((c) => c.slug !== TOOLS_CATEGORY.slug);
   const listedProducts = products.filter((p) =>
@@ -221,6 +222,34 @@ export default function AdminDashboard() {
       return;
     }
     notify('Product deleted successfully');
+    await loadAll();
+  };
+
+  const convertTool = async (id: string, title: string) => {
+    const price = Number(convertPrices[id]);
+    if (!(price > 0)) {
+      setError(`Enter a price for “${title}” before converting.`);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    const res = await fetch('/api/admin/tools', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, price }),
+    });
+    setBusy(false);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error || 'Could not convert tool');
+      return;
+    }
+    setConvertPrices((p) => {
+      const next = { ...p };
+      delete next[id];
+      return next;
+    });
+    notify(`“${title}” is now a tool for sale at $${price.toFixed(2)}`);
     await loadAll();
   };
 
@@ -620,26 +649,57 @@ export default function AdminDashboard() {
         <section className="space-y-2 rounded-2xl border border-amber-300/60 bg-amber-500/5 p-4 dark:border-amber-700/50">
           <h3 className="text-sm font-medium">Old link-only tools</h3>
           <p className="text-xs text-neutral-600 dark:text-neutral-400">
-            These were added before tools had prices and cannot be bought.
-            Re-add them above with a price, then delete them here.
+            These were added before tools had prices and cannot be bought yet.
+            Enter a price and click Convert — the title, description and image
+            are kept.
           </p>
           <ul className="space-y-2">
             {tools.map((t) => (
               <li
                 key={t.id}
-                className="flex items-start justify-between gap-3 rounded-xl border border-neutral-300/60 bg-white/45 p-3 dark:border-neutral-600/50 dark:bg-neutral-900/35"
+                className="flex flex-wrap items-center gap-3 rounded-xl border border-neutral-300/60 bg-white/45 p-3 dark:border-neutral-600/50 dark:bg-neutral-900/35"
               >
-                <div className="min-w-0">
+                {t.image ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={t.image}
+                    alt=""
+                    className="h-12 w-12 shrink-0 rounded-lg object-cover"
+                  />
+                ) : null}
+                <div className="min-w-0 flex-1">
                   <p className="truncate font-medium">{t.title}</p>
                   <p className="truncate text-xs text-neutral-500">{t.body}</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => deleteTool(t.id)}
-                  className="shrink-0 text-sm text-red-600"
-                >
-                  Delete
-                </button>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={convertPrices[t.id] ?? ''}
+                    onChange={(e) =>
+                      setConvertPrices((p) => ({ ...p, [t.id]: e.target.value }))
+                    }
+                    placeholder="Price $"
+                    aria-label={`Price for ${t.title}`}
+                    className="w-24 rounded-lg border border-neutral-300 px-2 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-800"
+                  />
+                  <button
+                    type="button"
+                    disabled={busy || !(Number(convertPrices[t.id]) > 0)}
+                    onClick={() => convertTool(t.id, t.title)}
+                    className="rounded-lg bg-orange-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Convert
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteTool(t.id)}
+                    className="text-sm text-red-600"
+                  >
+                    Delete
+                  </button>
+                </div>
               </li>
             ))}
           </ul>
