@@ -35,6 +35,47 @@ export function toPaystackAmount(usdTotal: number) {
   return Math.round(usdTotal * rate * 100);
 }
 
+export function isCryptoAsset(value: string): value is CryptoAsset {
+  return CRYPTO_ASSETS.some((a) => a.id === value);
+}
+
+export function normalizeTxHash(value: string) {
+  return value.trim().replace(/\s+/g, '');
+}
+
+/** EVM (0x + 64 hex), Litecoin (64 hex) or Solana (base58 signature). */
+export function isPlausibleTxHash(value: string) {
+  const hash = normalizeTxHash(value);
+  return (
+    /^0x[0-9a-fA-F]{64}$/.test(hash) ||
+    /^[0-9a-fA-F]{64}$/.test(hash) ||
+    /^[1-9A-HJ-NP-Za-km-z]{43,90}$/.test(hash)
+  );
+}
+
+export function getExplorerTxUrl(
+  asset: string | null | undefined,
+  txHash: string | null | undefined,
+): string | null {
+  if (!txHash) return null;
+  const hash = encodeURIComponent(normalizeTxHash(txHash));
+  const isEvm = /^0x/i.test(txHash);
+  switch (asset) {
+    case 'ETH':
+      return `https://etherscan.io/tx/${hash}`;
+    case 'USDC':
+      return isEvm
+        ? `https://etherscan.io/tx/${hash}`
+        : `https://solscan.io/tx/${hash}`;
+    case 'SOL':
+      return `https://solscan.io/tx/${hash}`;
+    case 'LTC':
+      return `https://blockchair.com/litecoin/transaction/${hash}`;
+    default:
+      return isEvm ? `https://etherscan.io/tx/${hash}` : null;
+  }
+}
+
 export function getCryptoAddress(asset: CryptoAsset): string {
   const map: Record<CryptoAsset, string | undefined> = {
     USDC: process.env.NEXT_PUBLIC_CRYPTO_USDC_ADDRESS,

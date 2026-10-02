@@ -3,6 +3,7 @@ import {
   getOrderByReference,
   updateOrderStatus,
 } from '@/lib/db';
+import { toPaystackAmount } from '@/lib/payments';
 import { verifyPaystackTransaction } from '@/lib/paystack-server';
 import { notifyTelegramChat } from '@/lib/telegram/handlers';
 
@@ -53,8 +54,18 @@ export async function GET(request: Request) {
     }
 
     const order = await getOrderByReference(reference);
-    if (order && order.status !== 'paid') {
-      await updateOrderStatus(order.id, 'paid');
+    if (order && Number(tx.amount ?? 0) + 1 < toPaystackAmount(order.total)) {
+      return new NextResponse(
+        htmlPage(
+          'Amount mismatch',
+          `The amount paid does not match order ${order.id}. Please contact support with reference ${reference}.`,
+        ),
+        { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } },
+      );
+    }
+    const firstConfirmation = order?.status === 'pending';
+    if (order && firstConfirmation) {
+      await updateOrderStatus(order.id, 'review');
     }
 
     const meta = tx.metadata || {};
@@ -64,16 +75,16 @@ export async function GET(request: Request) {
         ? Number(chatRaw)
         : NaN;
 
-    if (Number.isFinite(chatId) && chatId > 0) {
+    if (firstConfirmation && Number.isFinite(chatId) && chatId > 0) {
       try {
         await notifyTelegramChat(
           chatId,
           [
             '<b>Payment confirmed</b>',
             order
-              ? `Order <code>${order.id}</code> is marked paid.`
+              ? `Order <code>${order.id}</code> is now awaiting review.`
               : `Reference <code>${reference}</code> verified.`,
-            'We will deliver digital goods to your checkout email shortly.',
+            'You will get a message here once your order is approved and sent.',
           ].join('\n'),
         );
       } catch (error) {
@@ -85,7 +96,7 @@ export async function GET(request: Request) {
       htmlPage(
         'Payment successful',
         order
-          ? `Thanks! Order ${order.id} is paid. You can close this tab and return to Telegram.`
+          ? `Thanks! Order ${order.id} is paid and awaiting review. You can close this tab and return to Telegram.`
           : 'Thanks! Payment verified. You can close this tab and return to Telegram.',
       ),
       { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } },

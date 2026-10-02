@@ -11,15 +11,17 @@ import type {
 import { useToast } from '@/components/ui/Toast';
 import { useAdminSession } from '@/lib/admin-session';
 import { uploadFiles } from '@/lib/uploadthing';
+import OrdersPanel from '@/components/admin/OrdersPanel';
 
-type Tab = 'categories' | 'products' | 'tools';
+type Tab = 'orders' | 'categories' | 'products' | 'tools';
 
 export default function AdminDashboard() {
   const { notify } = useToast();
   const { refresh: refreshAdminSession } = useAdminSession();
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [password, setPassword] = useState('');
-  const [tab, setTab] = useState<Tab>('products');
+  const [tab, setTab] = useState<Tab>('orders');
+  const [awaitingReview, setAwaitingReview] = useState(0);
   const [categories, setCategories] = useState<CatalogCategory[]>([]);
   const [products, setProducts] = useState<CatalogProduct[]>([]);
   const [tools, setTools] = useState<CatalogTool[]>([]);
@@ -290,7 +292,7 @@ export default function AdminDashboard() {
             Admin dashboard
           </h2>
           <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-            Add, edit, or delete shop categories, products, and tools.
+            Review orders and manage shop categories, products, and tools.
           </p>
         </div>
         <button
@@ -305,6 +307,7 @@ export default function AdminDashboard() {
       <div className="flex flex-wrap gap-2">
         {(
           [
+            ['orders', 'Orders'],
             ['products', 'Products'],
             ['categories', 'Categories'],
             ['tools', 'Tools'],
@@ -314,16 +317,27 @@ export default function AdminDashboard() {
             key={id}
             type="button"
             onClick={() => setTab(id)}
-            className={`rounded-lg px-3 py-2 text-sm ${
+            className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm ${
               tab === id
                 ? 'bg-orange-500 text-white'
                 : 'border border-neutral-300/70 bg-white/40 dark:border-neutral-600 dark:bg-white/5'
             }`}
           >
             {label}
+            {id === 'orders' && awaitingReview > 0 ? (
+              <span
+                className={`rounded-full px-1.5 text-[11px] font-semibold ${
+                  tab === id ? 'bg-white text-orange-600' : 'bg-orange-500 text-white'
+                }`}
+              >
+                {awaitingReview}
+              </span>
+            ) : null}
           </button>
         ))}
       </div>
+
+      {tab === 'orders' ? <OrdersPanel onCountChange={setAwaitingReview} /> : null}
 
       {error ? (
         <p className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-600">

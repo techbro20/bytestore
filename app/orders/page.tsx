@@ -4,14 +4,31 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { PackageOpen } from 'lucide-react';
 import { getGuestEmail, setGuestEmail } from '@/lib/guest-orders';
-import type { DbOrder, OrderStatus } from '@/lib/order-types';
+import { ORDER_STATUS_LABEL, type DbOrder } from '@/lib/order-types';
 
-const statusLabel: Record<OrderStatus, string> = {
-  pending: 'Pending confirmation',
-  paid: 'Paid',
-  processing: 'Processing delivery',
-  delivered: 'Delivered',
+const STATUS_STYLE: Record<string, string> = {
+  pending: 'bg-neutral-500/15 text-neutral-600 dark:text-neutral-300',
+  review: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
+  paid: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
+  processing: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
+  delivered: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
+  rejected: 'bg-red-500/15 text-red-600 dark:text-red-400',
 };
+
+function statusHint(order: DbOrder) {
+  switch (order.status) {
+    case 'pending':
+      return 'Waiting for payment confirmation.';
+    case 'delivered':
+      return `Delivered${order.deliveredAt ? ` on ${new Date(order.deliveredAt).toLocaleDateString()}` : ''} — check ${order.email} (and your spam folder).`;
+    case 'rejected':
+      return order.adminNote
+        ? `Not approved: ${order.adminNote}`
+        : 'Not approved. Contact support for details.';
+    default:
+      return 'Payment received — we are reviewing your order and will email you once it is sent.';
+  }
+}
 
 export default function OrdersPage() {
   const [orders, setOrders] = useState<DbOrder[]>([]);
@@ -135,10 +152,21 @@ export default function OrdersPage() {
                     {new Date(order.createdAt).toLocaleString()} · {order.email}
                   </p>
                 </div>
-                <span className="rounded-full bg-orange-500/15 px-2.5 py-1 text-xs font-medium text-orange-600 dark:text-orange-400">
-                  {statusLabel[order.status]}
+                <span
+                  className={`rounded-full px-2.5 py-1 text-xs font-medium ${STATUS_STYLE[order.status] ?? ''}`}
+                >
+                  {ORDER_STATUS_LABEL[order.status] ?? order.status}
                 </span>
               </div>
+              <p
+                className={`mt-2 text-xs ${
+                  order.status === 'rejected'
+                    ? 'text-red-600 dark:text-red-400'
+                    : 'text-neutral-600 dark:text-neutral-400'
+                }`}
+              >
+                {statusHint(order)}
+              </p>
               <ul className="mt-3 space-y-1 text-sm text-neutral-700 dark:text-neutral-300">
                 {order.items.map((item, i) => (
                   <li
@@ -153,9 +181,13 @@ export default function OrdersPage() {
                 ))}
               </ul>
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-300/50 pt-3 text-sm dark:border-neutral-700/50">
-                <span className="text-neutral-500">
+                <span className="min-w-0 truncate text-neutral-500">
                   {order.method}
-                  {order.reference ? ` · ${order.reference}` : ''}
+                  {order.txHash
+                    ? ` · TxID ${order.txHash.slice(0, 10)}…${order.txHash.slice(-6)}`
+                    : order.reference
+                      ? ` · ${order.reference}`
+                      : ''}
                 </span>
                 <span className="font-medium text-neutral-900 dark:text-white">
                   ${order.total.toFixed(2)}

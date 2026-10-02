@@ -3,13 +3,18 @@ import {
   getOrdersByEmail,
   getTelegramSession,
   isDbConfigured,
+  isTxHashUsed,
   setTelegramSession,
   type TelegramSessionData,
 } from '@/lib/db';
 import { readCatalog, type CatalogProduct } from '@/lib/catalog-store';
+import { ORDER_STATUS_LABEL } from '@/lib/order-types';
 import {
   CRYPTO_ASSETS,
   getCryptoAddress,
+  isCryptoAsset,
+  isPlausibleTxHash,
+  normalizeTxHash,
   type CryptoAsset,
 } from '@/lib/payments';
 import { initializePaystackTransaction, isPaystackSecretConfigured } from '@/lib/paystack-server';
@@ -327,6 +332,7 @@ async function startPaystack(chatId: number) {
     method: 'Paystack · Telegram',
     status: 'pending',
     reference,
+    telegramChatId: chatId,
     items: [
       {
         productId: product.id,
@@ -433,7 +439,7 @@ async function showCryptoPay(chatId: number, asset: CryptoAsset) {
       '',
       `<code>${escapeHtml(address)}</code>`,
       '',
-      'After you send payment, tap <b>I have paid</b>. We will verify and deliver to your email.',
+      'After you send payment, tap <b>I have paid</b> and paste the <b>transaction hash</b> (TxID) from your wallet. We verify it before delivering.',
     ].join('\n'),
     {
       inline_keyboard: [
@@ -448,6 +454,44 @@ async function confirmCryptoPaid(chatId: number) {
   const session = await getTelegramSession(chatId);
   if (!session.productId || !session.email || !session.cryptoAsset) {
     await sendMessage(chatId, 'No pending crypto checkout. Use /start.');
+    return;
+  }
+
+  await setTelegramSession(chatId, { ...session, awaiting: 'txhash' });
+  await sendMessage(
+    chatId,
+    [
+      '<b>Send your transaction hash</b>',
+      '',
+      `Paste the ${escapeHtml(session.cryptoAsset)} transaction hash (TxID) from your wallet or exchange as a message.`,
+    ].join('\n'),
+    { inline_keyboard: [[{ text: '« Cancel', callback_data: 'menu' }]] },
+  );
+}
+
+async function handleTxHashInput(chatId: number, text: string) {
+  const session = await getTelegramSession(chatId);
+  if (!session.productId || !session.email || !session.cryptoAsset) {
+    await setTelegramSession(chatId, { email: session.email, awaiting: null });
+    await sendMessage(chatId, 'No pending crypto checkout. Use /start.');
+    return;
+  }
+
+  const txHash = normalizeTxHash(text);
+  if (!isPlausibleTxHash(txHash)) {
+    await sendMessage(
+      chatId,
+      'That does not look like a transaction hash. Copy the full TxID from your wallet and send it again.',
+      { inline_keyboard: [[{ text: '« Cancel', callback_data: 'menu' }]] },
+    );
+    return;
+  }
+  if (await isTxHashUsed(txHash)) {
+    await sendMessage(
+      chatId,
+      'This transaction hash was already submitted for another order. Send a different one or contact support.',
+      { inline_keyboard: [[{ text: '« Cancel', callback_data: 'menu' }]] },
+    );
     return;
   }
 
@@ -466,8 +510,11 @@ async function confirmCryptoPaid(chatId: number) {
     email: session.email,
     total,
     method: `Crypto · ${asset} · Telegram`,
-    status: 'pending',
+    status: 'review',
     reference,
+    txHash,
+    cryptoAsset: isCryptoAsset(asset) ? asset : null,
+    telegramChatId: chatId,
     items: [
       {
         productId: product.id,
@@ -486,12 +533,13 @@ async function confirmCryptoPaid(chatId: number) {
   await sendMessage(
     chatId,
     [
-      `<b>Crypto order recorded</b>`,
+      `<b>Order submitted for review</b>`,
       `Order <code>${escapeHtml(order.id)}</code>`,
       `Asset: ${escapeHtml(asset)}`,
       `Total: $${total.toFixed(2)} USD`,
+      `TxID: <code>${escapeHtml(txHash)}</code>`,
       '',
-      `We will verify the transfer and deliver to <b>${escapeHtml(session.email)}</b>.`,
+      `We will verify the transfer and deliver to <b>${escapeHtml(session.email)}</b>. You will also get a message here once it is approved.`,
     ].join('\n'),
     { inline_keyboard: mainMenuKeyboard() },
   );
@@ -526,7 +574,12 @@ async function showOrders(chatId: number) {
 
   const lines = orders.slice(0, 8).map((o) => {
     const items = o.items.map((i) => i.title).join(', ');
-    return `• <code>${escapeHtml(o.id)}</code> — $${o.total.toFixed(2)} — ${escapeHtml(o.status)} — ${escapeHtml(items)}`;
+    const status = ORDER_STATUS_LABEL[o.status] ?? o.status;
+    const note =
+      o.status === 'rejected' && o.adminNote
+        ? `\n   Reason: ${escapeHtml(o.adminNote)}`
+        : '';
+    return `• <code>${escapeHtml(o.id)}</code> — $${o.total.toFixed(2)} — <b>${escapeHtml(status)}</b> — ${escapeHtml(items)}${note}`;
   });
 
   await sendMessage(
@@ -579,6 +632,12 @@ export async function handleTelegramUpdate(update: TelegramUpdate) {
     }
 
     if (data === 'menu' || data === 'start') {
+      if (isDbConfigured()) {
+        const session = await getTelegramSession(chatId);
+        if (session.awaiting) {
+          await setTelegramSession(chatId, { ...session, awaiting: null });
+        }
+      }
       await showWelcome(chatId, cq.from.first_name);
       return;
     }
@@ -668,6 +727,10 @@ export async function handleTelegramUpdate(update: TelegramUpdate) {
   const session = await getTelegramSession(chatId);
   if (session.awaiting === 'email') {
     await handleEmailInput(chatId, text);
+    return;
+  }
+  if (session.awaiting === 'txhash') {
+    await handleTxHashInput(chatId, text);
     return;
   }
 

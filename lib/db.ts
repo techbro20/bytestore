@@ -1,7 +1,18 @@
 import { neon, type NeonQueryFunction } from '@neondatabase/serverless';
-import type { DbOrder, DbOrderItem, OrderStatus } from './order-types';
+import {
+  REVIEW_STATUSES,
+  type AdminOrder,
+  type DbOrder,
+  type DbOrderItem,
+  type OrderStatus,
+} from './order-types';
 
-export type { DbOrder, DbOrderItem, OrderStatus } from './order-types';
+export type {
+  AdminOrder,
+  DbOrder,
+  DbOrderItem,
+  OrderStatus,
+} from './order-types';
 
 let sql: NeonQueryFunction<false, false> | null = null;
 let schemaReady: Promise<void> | null = null;
@@ -49,6 +60,15 @@ export async function ensureOrderSchema() {
       await db`CREATE INDEX IF NOT EXISTS orders_email_idx ON orders (email)`;
       await db`CREATE INDEX IF NOT EXISTS orders_created_at_idx ON orders (created_at DESC)`;
       await db`CREATE INDEX IF NOT EXISTS orders_reference_idx ON orders (reference)`;
+      await db`ALTER TABLE orders ADD COLUMN IF NOT EXISTS tx_hash TEXT`;
+      await db`ALTER TABLE orders ADD COLUMN IF NOT EXISTS crypto_asset TEXT`;
+      await db`ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_details TEXT`;
+      await db`ALTER TABLE orders ADD COLUMN IF NOT EXISTS admin_note TEXT`;
+      await db`ALTER TABLE orders ADD COLUMN IF NOT EXISTS telegram_chat_id BIGINT`;
+      await db`ALTER TABLE orders ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ`;
+      await db`ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ`;
+      await db`CREATE INDEX IF NOT EXISTS orders_status_idx ON orders (status)`;
+      await db`CREATE INDEX IF NOT EXISTS orders_tx_hash_idx ON orders (tx_hash)`;
       await db`
         CREATE TABLE IF NOT EXISTS telegram_sessions (
           chat_id BIGINT PRIMARY KEY,
@@ -105,6 +125,10 @@ export async function createOrder(input: {
   method: string;
   status: OrderStatus;
   reference?: string;
+  txHash?: string | null;
+  cryptoAsset?: string | null;
+  adminNote?: string | null;
+  telegramChatId?: number | null;
   items: DbOrderItem[];
 }): Promise<DbOrder> {
   await ensureOrderSchema();
@@ -113,14 +137,21 @@ export async function createOrder(input: {
   const email = input.email.trim().toLowerCase();
 
   await db`
-    INSERT INTO orders (id, email, total, method, status, reference)
+    INSERT INTO orders (
+      id, email, total, method, status, reference,
+      tx_hash, crypto_asset, admin_note, telegram_chat_id
+    )
     VALUES (
       ${id},
       ${email},
       ${input.total},
       ${input.method},
       ${input.status},
-      ${input.reference ?? null}
+      ${input.reference ?? null},
+      ${input.txHash ?? null},
+      ${input.cryptoAsset ?? null},
+      ${input.adminNote ?? null},
+      ${input.telegramChatId ?? null}
     )
   `;
 
@@ -139,82 +170,35 @@ export async function createOrder(input: {
     `;
   }
 
-  const orders = await getOrdersByEmail(email);
-  const created = orders.find((o) => o.id === id);
+  const created = await getOrderById(id);
   if (!created) {
     throw new Error('Order created but could not be loaded');
   }
   return created;
 }
 
+/** Public view for customers — never includes delivery details. */
 export async function getOrdersByEmail(email: string): Promise<DbOrder[]> {
   await ensureOrderSchema();
   const db = getDb();
   const normalized = email.trim().toLowerCase();
 
   const rows = await db`
-    SELECT
-      o.id,
-      o.email,
-      o.total,
-      o.method,
-      o.status,
-      o.reference,
-      o.created_at,
-      i.product_id,
-      i.title,
-      i.quantity,
-      i.price
+    SELECT o.*, i.product_id, i.title, i.quantity, i.price
     FROM orders o
     LEFT JOIN order_items i ON i.order_id = o.id
     WHERE o.email = ${normalized}
     ORDER BY o.created_at DESC, i.title ASC
   `;
 
-  const map = new Map<string, DbOrder>();
-  for (const row of rows as Array<Record<string, unknown>>) {
-    const id = String(row.id);
-    if (!map.has(id)) {
-      map.set(id, {
-        id,
-        email: String(row.email),
-        createdAt: new Date(String(row.created_at)).toISOString(),
-        total: Number(row.total),
-        method: String(row.method),
-        status: row.status as OrderStatus,
-        reference: row.reference ? String(row.reference) : null,
-        items: [],
-      });
-    }
-    if (row.product_id) {
-      map.get(id)!.items.push({
-        productId: String(row.product_id),
-        title: String(row.title),
-        quantity: Number(row.quantity),
-        price: Number(row.price),
-      });
-    }
-  }
-
-  return [...map.values()];
+  return mapOrderRows(rows as Array<Record<string, unknown>>).map(toPublicOrder);
 }
 
-export async function getOrderById(id: string): Promise<DbOrder | null> {
+export async function getOrderById(id: string): Promise<AdminOrder | null> {
   await ensureOrderSchema();
   const db = getDb();
   const rows = await db`
-    SELECT
-      o.id,
-      o.email,
-      o.total,
-      o.method,
-      o.status,
-      o.reference,
-      o.created_at,
-      i.product_id,
-      i.title,
-      i.quantity,
-      i.price
+    SELECT o.*, i.product_id, i.title, i.quantity, i.price
     FROM orders o
     LEFT JOIN order_items i ON i.order_id = o.id
     WHERE o.id = ${id}
@@ -227,22 +211,11 @@ export async function getOrderById(id: string): Promise<DbOrder | null> {
 
 export async function getOrderByReference(
   reference: string,
-): Promise<DbOrder | null> {
+): Promise<AdminOrder | null> {
   await ensureOrderSchema();
   const db = getDb();
   const rows = await db`
-    SELECT
-      o.id,
-      o.email,
-      o.total,
-      o.method,
-      o.status,
-      o.reference,
-      o.created_at,
-      i.product_id,
-      i.title,
-      i.quantity,
-      i.price
+    SELECT o.*, i.product_id, i.title, i.quantity, i.price
     FROM orders o
     LEFT JOIN order_items i ON i.order_id = o.id
     WHERE o.reference = ${reference}
@@ -251,6 +224,53 @@ export async function getOrderByReference(
 
   if (!rows.length) return null;
   return mapOrderRows(rows as Array<Record<string, unknown>>)[0] ?? null;
+}
+
+export async function isTxHashUsed(txHash: string): Promise<boolean> {
+  await ensureOrderSchema();
+  const db = getDb();
+  const rows = await db`
+    SELECT 1 FROM orders
+    WHERE LOWER(tx_hash) = ${txHash.trim().toLowerCase()}
+      AND status <> 'rejected'
+    LIMIT 1
+  `;
+  return rows.length > 0;
+}
+
+export type AdminOrderFilter = 'queue' | 'pending' | 'delivered' | 'rejected' | 'all';
+
+export async function listAdminOrders(
+  filter: AdminOrderFilter = 'queue',
+): Promise<AdminOrder[]> {
+  await ensureOrderSchema();
+  const db = getDb();
+  const statuses: OrderStatus[] =
+    filter === 'queue'
+      ? REVIEW_STATUSES
+      : filter === 'all'
+        ? ['pending', ...REVIEW_STATUSES, 'delivered', 'rejected']
+        : [filter];
+
+  const rows = await db`
+    SELECT o.*, i.product_id, i.title, i.quantity, i.price
+    FROM orders o
+    LEFT JOIN order_items i ON i.order_id = o.id
+    WHERE o.status = ANY(${statuses})
+    ORDER BY o.created_at DESC, i.title ASC
+    LIMIT 1000
+  `;
+
+  return mapOrderRows(rows as Array<Record<string, unknown>>);
+}
+
+export async function countOrdersAwaitingReview(): Promise<number> {
+  await ensureOrderSchema();
+  const db = getDb();
+  const rows = await db`
+    SELECT COUNT(*)::int AS n FROM orders WHERE status = ANY(${REVIEW_STATUSES})
+  `;
+  return Number((rows[0] as { n?: number })?.n ?? 0);
 }
 
 export async function updateOrderStatus(
@@ -262,11 +282,51 @@ export async function updateOrderStatus(
   await db`UPDATE orders SET status = ${status} WHERE id = ${id}`;
 }
 
-function mapOrderRows(rows: Array<Record<string, unknown>>): DbOrder[] {
-  const map = new Map<string, DbOrder>();
+export async function markOrderDelivered(
+  id: string,
+  deliveryDetails: string,
+): Promise<AdminOrder | null> {
+  await ensureOrderSchema();
+  const db = getDb();
+  await db`
+    UPDATE orders
+    SET status = 'delivered',
+        delivery_details = ${deliveryDetails},
+        admin_note = NULL,
+        reviewed_at = NOW(),
+        delivered_at = NOW()
+    WHERE id = ${id}
+  `;
+  return getOrderById(id);
+}
+
+export async function markOrderRejected(
+  id: string,
+  reason: string,
+): Promise<AdminOrder | null> {
+  await ensureOrderSchema();
+  const db = getDb();
+  await db`
+    UPDATE orders
+    SET status = 'rejected',
+        admin_note = ${reason},
+        reviewed_at = NOW()
+    WHERE id = ${id}
+  `;
+  return getOrderById(id);
+}
+
+function toIso(value: unknown): string | null {
+  if (!value) return null;
+  return new Date(String(value)).toISOString();
+}
+
+function mapOrderRows(rows: Array<Record<string, unknown>>): AdminOrder[] {
+  const map = new Map<string, AdminOrder>();
   for (const row of rows) {
     const id = String(row.id);
     if (!map.has(id)) {
+      const chat = row.telegram_chat_id;
       map.set(id, {
         id,
         email: String(row.email),
@@ -275,6 +335,18 @@ function mapOrderRows(rows: Array<Record<string, unknown>>): DbOrder[] {
         method: String(row.method),
         status: row.status as OrderStatus,
         reference: row.reference ? String(row.reference) : null,
+        txHash: row.tx_hash ? String(row.tx_hash) : null,
+        cryptoAsset: row.crypto_asset ? String(row.crypto_asset) : null,
+        adminNote: row.admin_note ? String(row.admin_note) : null,
+        deliveredAt: toIso(row.delivered_at),
+        deliveryDetails: row.delivery_details
+          ? String(row.delivery_details)
+          : null,
+        telegramChatId:
+          chat !== null && chat !== undefined && chat !== ''
+            ? Number(chat)
+            : null,
+        reviewedAt: toIso(row.reviewed_at),
         items: [],
       });
     }
@@ -290,8 +362,25 @@ function mapOrderRows(rows: Array<Record<string, unknown>>): DbOrder[] {
   return [...map.values()];
 }
 
+export function toPublicOrder(order: AdminOrder): DbOrder {
+  return {
+    id: order.id,
+    email: order.email,
+    createdAt: order.createdAt,
+    total: order.total,
+    method: order.method,
+    status: order.status,
+    reference: order.reference ?? null,
+    txHash: order.txHash ?? null,
+    cryptoAsset: order.cryptoAsset ?? null,
+    adminNote: order.status === 'rejected' ? (order.adminNote ?? null) : null,
+    deliveredAt: order.deliveredAt ?? null,
+    items: order.items,
+  };
+}
+
 export type TelegramSessionData = {
-  awaiting?: 'email' | null;
+  awaiting?: 'email' | 'txhash' | null;
   productId?: string;
   quantity?: number;
   email?: string;

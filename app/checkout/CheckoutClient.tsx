@@ -21,7 +21,6 @@ import {
 } from '@/lib/payments';
 import { usePaystack } from '@/hooks/usePaystack';
 import { getGuestEmail, setGuestEmail } from '@/lib/guest-orders';
-import type { OrderStatus } from '@/lib/order-types';
 
 export default function CheckoutClient() {
   const router = useRouter();
@@ -35,6 +34,8 @@ export default function CheckoutClient() {
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [txHash, setTxHash] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const [buyReady, setBuyReady] = useState(!buySlug);
 
   useEffect(() => {
@@ -65,26 +66,22 @@ export default function CheckoutClient() {
   const checkoutTotal = total;
   const address = getCryptoAddress(cryptoAsset);
 
-  const recordOrder = async (
-    paymentMethod: string,
-    orderStatus: OrderStatus,
-    reference?: string,
-  ) => {
+  const recordOrder = async (payment: {
+    method: PaymentMethod;
+    reference?: string;
+    cryptoAsset?: CryptoAsset;
+    txHash?: string;
+  }) => {
     setGuestEmail(email.trim());
     const res = await fetch('/api/orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: email.trim(),
-        total: checkoutTotal,
-        method: paymentMethod,
-        status: orderStatus,
-        reference,
+        ...payment,
         items: items.map((i) => ({
           productId: i.product.id,
-          title: i.product.title,
           quantity: i.quantity,
-          price: i.product.price,
         })),
       }),
     });
@@ -117,21 +114,18 @@ export default function CheckoutClient() {
       },
       onSuccess: async (res) => {
         try {
-          await recordOrder(
-            method === 'paystack_mobile_money'
-              ? 'Paystack · Mobile money'
-              : 'Paystack · Card',
-            'paid',
-            res.reference,
-          );
+          setStatus('Confirming your payment…');
+          await recordOrder({ method, reference: res.reference });
           clearCart();
-          setStatus(`Payment successful. Ref: ${res.reference}`);
-          setTimeout(() => router.push('/orders'), 1200);
+          setStatus(
+            `Payment confirmed (ref ${res.reference}). Your order is awaiting review — we will email ${email.trim()} once it is approved.`,
+          );
+          setTimeout(() => router.push('/orders'), 2500);
         } catch (error) {
           setStatus(
             error instanceof Error
-              ? error.message
-              : 'Payment succeeded but order could not be saved.',
+              ? `${error.message}. Contact support with reference ${res.reference}.`
+              : `Payment received but the order could not be saved. Contact support with reference ${res.reference}.`,
           );
         }
       },
@@ -150,17 +144,29 @@ export default function CheckoutClient() {
       setStatus('Enter your email so we can deliver after confirmation.');
       return;
     }
+    if (!txHash.trim()) {
+      setStatus('Paste the transaction hash (TxID) from your wallet.');
+      return;
+    }
+    setSubmitting(true);
     try {
-      await recordOrder(`Crypto · ${cryptoAsset}`, 'pending');
+      await recordOrder({
+        method: 'crypto',
+        cryptoAsset,
+        txHash: txHash.trim(),
+      });
       clearCart();
+      setTxHash('');
       setStatus(
-        `Crypto order recorded for ${cryptoAsset}. We will verify and email ${email.trim()}.`,
+        `Crypto order submitted. We will verify the ${cryptoAsset} transfer and email ${email.trim()} once it is approved.`,
       );
-      setTimeout(() => router.push('/orders'), 1400);
+      setTimeout(() => router.push('/orders'), 2500);
     } catch (error) {
       setStatus(
         error instanceof Error ? error.message : 'Could not save crypto order.',
       );
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -292,13 +298,33 @@ export default function CheckoutClient() {
                 </p>
               )}
             </div>
+            <label className="block text-sm">
+              <span className="mb-1.5 block font-medium text-neutral-700 dark:text-neutral-300">
+                Transaction hash (TxID)
+              </span>
+              <input
+                value={txHash}
+                onChange={(e) => setTxHash(e.target.value)}
+                placeholder={
+                  cryptoAsset === 'SOL' ? 'e.g. 5h3k…' : 'e.g. 0x9f2c…'
+                }
+                spellCheck={false}
+                autoComplete="off"
+                className="w-full rounded-lg border border-neutral-300 bg-white/80 px-3 py-2.5 font-mono text-xs outline-none focus:border-orange-400 dark:border-neutral-600 dark:bg-neutral-800 dark:text-white"
+              />
+              <span className="mt-1 block text-xs text-neutral-500">
+                After sending, copy the transaction ID from your wallet or
+                exchange. We verify it before delivering your order.
+              </span>
+            </label>
             <button
               type="button"
               onClick={onCryptoConfirm}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-orange-500 py-3 text-sm font-medium text-white hover:bg-orange-600"
+              disabled={submitting || !txHash.trim()}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-orange-500 py-3 text-sm font-medium text-white hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Wallet className="h-4 w-4" />
-              I have paid with {cryptoAsset}
+              {submitting ? 'Submitting…' : `I have paid with ${cryptoAsset}`}
             </button>
           </div>
         ) : (
