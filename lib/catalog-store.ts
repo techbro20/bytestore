@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { ensureOrderSchema, getDb, isDbConfigured } from '@/lib/db';
+import { TOOLS_CATEGORY } from '@/lib/tools-category';
 
 export type CatalogCategory = {
   slug: string;
@@ -253,6 +254,16 @@ export async function deleteCategory(slug: string) {
   const db = getDb();
   // Products cascade via FK
   await db`DELETE FROM categories WHERE slug = ${slug}`;
+}
+
+export async function ensureToolsCategory() {
+  await ensureOrderSchema();
+  const db = getDb();
+  await db`
+    INSERT INTO categories (slug, title, description)
+    VALUES (${TOOLS_CATEGORY.slug}, ${TOOLS_CATEGORY.title}, ${TOOLS_CATEGORY.description})
+    ON CONFLICT (slug) DO NOTHING
+  `;
 }
 
 export async function getCategoryBySlug(slug: string) {

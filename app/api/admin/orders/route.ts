@@ -16,7 +16,7 @@ import { notifyTelegramChat } from '@/lib/telegram/handlers';
 
 export const dynamic = 'force-dynamic';
 
-const FILTERS: AdminOrderFilter[] = ['queue', 'pending', 'delivered', 'rejected', 'all'];
+const FILTERS: AdminOrderFilter[] = ['queue', 'delivered', 'rejected', 'all'];
 const TELEGRAM_TEXT_LIMIT = 3500;
 
 async function requireAdmin() {
@@ -104,8 +104,11 @@ export async function PATCH(request: Request) {
         { status: 400 },
       );
     }
-    if (existing.status === 'delivered') {
-      return NextResponse.json({ error: 'Order is already delivered' }, { status: 409 });
+    if (!REVIEW_STATUSES.includes(existing.status)) {
+      return NextResponse.json(
+        { error: `Only paid orders awaiting review can be delivered (this one is ${existing.status})` },
+        { status: 409 },
+      );
     }
 
     const order = await markOrderDelivered(existing.id, details);
@@ -140,7 +143,7 @@ export async function PATCH(request: Request) {
         { status: 400 },
       );
     }
-    if (!REVIEW_STATUSES.includes(existing.status) && existing.status !== 'pending') {
+    if (!REVIEW_STATUSES.includes(existing.status)) {
       return NextResponse.json(
         { error: `Cannot reject an order that is ${existing.status}` },
         { status: 409 },

@@ -10,11 +10,10 @@ import {
 } from '@/lib/order-types';
 import { getExplorerTxUrl } from '@/lib/payments';
 
-type Filter = 'queue' | 'pending' | 'delivered' | 'rejected' | 'all';
+type Filter = 'queue' | 'delivered' | 'rejected' | 'all';
 
 const FILTERS: Array<[Filter, string]> = [
   ['queue', 'Awaiting review'],
-  ['pending', 'Awaiting payment'],
   ['delivered', 'Delivered'],
   ['rejected', 'Rejected'],
   ['all', 'All'],
@@ -168,8 +167,7 @@ export default function OrdersPanel({
       <ul className="space-y-3">
         {orders.map((order) => {
           const explorer = getExplorerTxUrl(order.cryptoAsset, order.txHash);
-          const canReview =
-            REVIEW_STATUSES.includes(order.status) || order.status === 'pending';
+          const canReview = REVIEW_STATUSES.includes(order.status);
           const draft = details[order.id] ?? '';
           return (
             <li

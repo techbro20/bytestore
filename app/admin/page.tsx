@@ -12,6 +12,7 @@ import { useToast } from '@/components/ui/Toast';
 import { useAdminSession } from '@/lib/admin-session';
 import { uploadFiles } from '@/lib/uploadthing';
 import OrdersPanel from '@/components/admin/OrdersPanel';
+import { TOOLS_CATEGORY } from '@/lib/tools-category';
 
 type Tab = 'orders' | 'categories' | 'products' | 'tools';
 
@@ -47,13 +48,23 @@ export default function AdminDashboard() {
     [],
   );
   const [productForm, setProductForm] = useState(emptyProduct);
-  const [toolForm, setToolForm] = useState({
-    id: '',
-    title: '',
-    body: '',
-    href: '/shop',
-    image: '',
-  });
+  const isToolsTab = tab === 'tools';
+  const shopCategories = categories.filter((c) => c.slug !== TOOLS_CATEGORY.slug);
+  const listedProducts = products.filter((p) =>
+    isToolsTab
+      ? p.category === TOOLS_CATEGORY.slug
+      : p.category !== TOOLS_CATEGORY.slug,
+  );
+
+  const switchTab = (next: Tab) => {
+    setTab(next);
+    setError(null);
+    setProductForm({
+      ...emptyProduct,
+      category:
+        next === 'tools' ? TOOLS_CATEGORY.slug : shopCategories[0]?.slug || '',
+    });
+  };
 
   const loadAll = useCallback(async () => {
     const res = await fetch('/api/catalog', { cache: 'no-store' });
@@ -74,10 +85,10 @@ export default function AdminDashboard() {
   }, [loadAll]);
 
   useEffect(() => {
-    if (!productForm.category && categories.length > 0 && !productForm.id) {
-      setProductForm((p) => ({ ...p, category: categories[0].slug }));
-    }
-  }, [categories, productForm.category, productForm.id]);
+    if (tab === 'tools' || productForm.category || productForm.id) return;
+    const first = categories.find((c) => c.slug !== TOOLS_CATEGORY.slug);
+    if (first) setProductForm((p) => ({ ...p, category: first.slug }));
+  }, [tab, categories, productForm.category, productForm.id]);
 
   const login = async (e: FormEvent) => {
     e.preventDefault();
@@ -152,9 +163,16 @@ export default function AdminDashboard() {
   const saveProduct = async (e: FormEvent) => {
     e.preventDefault();
     const title = productForm.title.trim();
-    const category = productForm.category.trim() || categories[0]?.slug || '';
+    const noun = isToolsTab ? 'Tool' : 'Product';
+    const category = isToolsTab
+      ? TOOLS_CATEGORY.slug
+      : productForm.category.trim() || shopCategories[0]?.slug || '';
     if (!title) {
-      setError('Enter a product title.');
+      setError(`Enter a ${noun.toLowerCase()} title.`);
+      return;
+    }
+    if (!(productForm.price > 0)) {
+      setError(`Enter a price for this ${noun.toLowerCase()}.`);
       return;
     }
     if (!category) {
@@ -162,7 +180,7 @@ export default function AdminDashboard() {
       return;
     }
     if (!productForm.image) {
-      setError('Add a product image before saving.');
+      setError(`Add a ${noun.toLowerCase()} image before saving.`);
       return;
     }
     setBusy(true);
@@ -181,11 +199,14 @@ export default function AdminDashboard() {
       setError(data.error || 'Failed');
       return;
     }
-    setProductForm({ ...emptyProduct, category: categories[0]?.slug || '' });
+    setProductForm({
+      ...emptyProduct,
+      category: isToolsTab ? TOOLS_CATEGORY.slug : shopCategories[0]?.slug || '',
+    });
     notify(
       wasEdit
-        ? `Product “${title}” updated successfully`
-        : `Product “${title}” added successfully`,
+        ? `${noun} “${title}” updated successfully`
+        : `${noun} “${title}” added successfully`,
     );
     await loadAll();
   };
@@ -203,39 +224,8 @@ export default function AdminDashboard() {
     await loadAll();
   };
 
-  const saveTool = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!toolForm.image) {
-      setError('Add a tool image before saving.');
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    const method = toolForm.id ? 'PUT' : 'POST';
-    const wasEdit = Boolean(toolForm.id);
-    const title = toolForm.title.trim();
-    const res = await fetch('/api/admin/tools', {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(toolForm),
-    });
-    setBusy(false);
-    if (!res.ok) {
-      const data = await res.json();
-      setError(data.error || 'Failed');
-      return;
-    }
-    setToolForm({ id: '', title: '', body: '', href: '/shop', image: '' });
-    notify(
-      wasEdit
-        ? `Tool “${title}” updated successfully`
-        : `Tool “${title}” added successfully`,
-    );
-    await loadAll();
-  };
-
   const deleteTool = async (id: string) => {
-    if (!confirm('Delete this tool?')) return;
+    if (!confirm('Delete this old link-only tool?')) return;
     const res = await fetch(`/api/admin/tools?id=${encodeURIComponent(id)}`, {
       method: 'DELETE',
     });
@@ -316,7 +306,7 @@ export default function AdminDashboard() {
           <button
             key={id}
             type="button"
-            onClick={() => setTab(id)}
+            onClick={() => switchTab(id)}
             className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm ${
               tab === id
                 ? 'bg-orange-500 text-white'
@@ -375,7 +365,7 @@ export default function AdminDashboard() {
             </button>
           </form>
           <ul className="space-y-2">
-            {categories.map((c) => (
+            {shopCategories.map((c) => (
               <li
                 key={c.slug}
                 className="flex items-start justify-between gap-3 rounded-xl border border-neutral-300/60 bg-white/45 p-4 dark:border-neutral-600/50 dark:bg-neutral-900/35"
@@ -400,15 +390,27 @@ export default function AdminDashboard() {
         </section>
       ) : null}
 
-      {tab === 'products' ? (
+      {tab === 'products' || tab === 'tools' ? (
         <section className="grid gap-6 lg:grid-cols-[1fr_1.1fr]">
           <form
             onSubmit={saveProduct}
             className="space-y-3 rounded-2xl border border-neutral-300/60 bg-white/50 p-5 backdrop-blur-xl dark:border-neutral-600/50 dark:bg-neutral-900/40"
           >
             <h3 className="font-medium">
-              {productForm.id ? 'Edit product' : 'Add product'}
+              {isToolsTab
+                ? productForm.id
+                  ? 'Edit tool'
+                  : 'Add tool'
+                : productForm.id
+                  ? 'Edit product'
+                  : 'Add product'}
             </h3>
+            {isToolsTab ? (
+              <p className="text-xs text-neutral-500">
+                Tools are sold like products — shown on the Tools page, in the
+                shop under “Tools”, and in the Telegram bot.
+              </p>
+            ) : null}
             <input
               value={productForm.title}
               onChange={(e) =>
@@ -426,23 +428,25 @@ export default function AdminDashboard() {
               placeholder="Short description"
               className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-600 dark:bg-neutral-800"
             />
-            <select
-              value={productForm.category}
-              onChange={(e) =>
-                setProductForm((p) => ({ ...p, category: e.target.value }))
-              }
-              required
-              className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-600 dark:bg-neutral-800"
-            >
-              <option value="" disabled>
-                Select category
-              </option>
-              {categories.map((c) => (
-                <option key={c.slug} value={c.slug}>
-                  {c.title}
+            {isToolsTab ? null : (
+              <select
+                value={productForm.category}
+                onChange={(e) =>
+                  setProductForm((p) => ({ ...p, category: e.target.value }))
+                }
+                required
+                className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-600 dark:bg-neutral-800"
+              >
+                <option value="" disabled>
+                  Select category
                 </option>
-              ))}
-            </select>
+                {shopCategories.map((c) => (
+                  <option key={c.slug} value={c.slug}>
+                    {c.title}
+                  </option>
+                ))}
+              </select>
+            )}
             <label className="block text-sm">
               <span className="mb-1 block font-medium text-neutral-700 dark:text-neutral-300">
                 Price (USD)
@@ -476,7 +480,7 @@ export default function AdminDashboard() {
               className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-600 dark:bg-neutral-800"
             />
             <ImagePicker
-              label="Product image"
+              label={isToolsTab ? 'Tool image' : 'Product image'}
               imageUrl={productForm.image}
               required
               onPick={async (file) => {
@@ -523,7 +527,11 @@ export default function AdminDashboard() {
                 disabled={busy}
                 className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-medium text-white"
               >
-                {productForm.id ? 'Save changes' : 'Add product'}
+                {productForm.id
+                  ? 'Save changes'
+                  : isToolsTab
+                    ? 'Add tool'
+                    : 'Add product'}
               </button>
               {productForm.id ? (
                 <button
@@ -531,7 +539,9 @@ export default function AdminDashboard() {
                   onClick={() =>
                     setProductForm({
                       ...emptyProduct,
-                      category: categories[0]?.slug || '',
+                      category: isToolsTab
+                        ? TOOLS_CATEGORY.slug
+                        : shopCategories[0]?.slug || '',
                     })
                   }
                   className="rounded-lg border border-neutral-300 px-4 py-2 text-sm dark:border-neutral-600"
@@ -543,7 +553,12 @@ export default function AdminDashboard() {
           </form>
 
           <ul className="space-y-2">
-            {products.map((p) => (
+            {listedProducts.length === 0 ? (
+              <li className="rounded-xl border border-dashed border-neutral-300/70 p-6 text-center text-sm text-neutral-500 dark:border-neutral-600/50">
+                {isToolsTab ? 'No tools yet.' : 'No products yet.'}
+              </li>
+            ) : null}
+            {listedProducts.map((p) => (
               <li
                 key={p.id}
                 className="flex gap-3 rounded-xl border border-neutral-300/60 bg-white/45 p-3 dark:border-neutral-600/50 dark:bg-neutral-900/35"
@@ -601,119 +616,30 @@ export default function AdminDashboard() {
         </section>
       ) : null}
 
-      {tab === 'tools' ? (
-        <section className="grid gap-6 lg:grid-cols-2">
-          <form
-            onSubmit={saveTool}
-            className="space-y-3 rounded-2xl border border-neutral-300/60 bg-white/50 p-5 backdrop-blur-xl dark:border-neutral-600/50 dark:bg-neutral-900/40"
-          >
-            <h3 className="font-medium">
-              {toolForm.id ? 'Edit tool' : 'Add tool'}
-            </h3>
-            <input
-              value={toolForm.title}
-              onChange={(e) =>
-                setToolForm((t) => ({ ...t, title: e.target.value }))
-              }
-              placeholder="Title"
-              required
-              className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-600 dark:bg-neutral-800"
-            />
-            <textarea
-              value={toolForm.body}
-              onChange={(e) =>
-                setToolForm((t) => ({ ...t, body: e.target.value }))
-              }
-              placeholder="Description"
-              rows={3}
-              className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-600 dark:bg-neutral-800"
-            />
-            <input
-              value={toolForm.href}
-              onChange={(e) =>
-                setToolForm((t) => ({ ...t, href: e.target.value }))
-              }
-              placeholder="Link href e.g. /shop?category=call-center"
-              className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-600 dark:bg-neutral-800"
-            />
-            <ImagePicker
-              label="Tool image"
-              imageUrl={toolForm.image}
-              required
-              onPick={async (file) => {
-                try {
-                  const url = await uploadImage(file);
-                  if (url) setToolForm((t) => ({ ...t, image: url }));
-                } catch (err) {
-                  setError(err instanceof Error ? err.message : 'Upload failed');
-                }
-              }}
-              onClear={() => setToolForm((t) => ({ ...t, image: '' }))}
-            />
-            <div className="flex gap-2">
-              <button
-                type="submit"
-                disabled={busy}
-                className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-medium text-white"
-              >
-                {toolForm.id ? 'Save tool' : 'Add tool'}
-              </button>
-              {toolForm.id ? (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setToolForm({
-                      id: '',
-                      title: '',
-                      body: '',
-                      href: '/shop',
-                      image: '',
-                    })
-                  }
-                  className="rounded-lg border border-neutral-300 px-4 py-2 text-sm"
-                >
-                  Cancel
-                </button>
-              ) : null}
-            </div>
-          </form>
+      {tab === 'tools' && tools.length > 0 ? (
+        <section className="space-y-2 rounded-2xl border border-amber-300/60 bg-amber-500/5 p-4 dark:border-amber-700/50">
+          <h3 className="text-sm font-medium">Old link-only tools</h3>
+          <p className="text-xs text-neutral-600 dark:text-neutral-400">
+            These were added before tools had prices and cannot be bought.
+            Re-add them above with a price, then delete them here.
+          </p>
           <ul className="space-y-2">
             {tools.map((t) => (
               <li
                 key={t.id}
-                className="flex items-start justify-between gap-3 rounded-xl border border-neutral-300/60 bg-white/45 p-4 dark:border-neutral-600/50 dark:bg-neutral-900/35"
+                className="flex items-start justify-between gap-3 rounded-xl border border-neutral-300/60 bg-white/45 p-3 dark:border-neutral-600/50 dark:bg-neutral-900/35"
               >
-                <div>
-                  <p className="font-medium">{t.title}</p>
-                  <p className="text-sm text-neutral-600 dark:text-neutral-400">
-                    {t.body}
-                  </p>
-                  <p className="mt-1 text-xs text-neutral-500">{t.href}</p>
+                <div className="min-w-0">
+                  <p className="truncate font-medium">{t.title}</p>
+                  <p className="truncate text-xs text-neutral-500">{t.body}</p>
                 </div>
-                <div className="flex flex-col gap-1 text-sm">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setToolForm({
-                        id: t.id,
-                        title: t.title,
-                        body: t.body,
-                        href: t.href,
-                        image: t.image || '',
-                      })
-                    }
-                    className="text-orange-600"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => deleteTool(t.id)}
-                    className="text-red-600"
-                  >
-                    Delete
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => deleteTool(t.id)}
+                  className="shrink-0 text-sm text-red-600"
+                >
+                  Delete
+                </button>
               </li>
             ))}
           </ul>

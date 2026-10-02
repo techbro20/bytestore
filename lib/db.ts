@@ -238,7 +238,8 @@ export async function isTxHashUsed(txHash: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-export type AdminOrderFilter = 'queue' | 'pending' | 'delivered' | 'rejected' | 'all';
+/** Unpaid (`pending`) checkouts are never listed for admins. */
+export type AdminOrderFilter = 'queue' | 'delivered' | 'rejected' | 'all';
 
 export async function listAdminOrders(
   filter: AdminOrderFilter = 'queue',
@@ -249,7 +250,7 @@ export async function listAdminOrders(
     filter === 'queue'
       ? REVIEW_STATUSES
       : filter === 'all'
-        ? ['pending', ...REVIEW_STATUSES, 'delivered', 'rejected']
+        ? [...REVIEW_STATUSES, 'delivered', 'rejected']
         : [filter];
 
   const rows = await db`

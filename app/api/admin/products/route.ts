@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { isDbConfigured } from '@/lib/db';
 import {
   deleteProduct,
+  ensureToolsCategory,
   getCategoryBySlug,
   getProductById,
   insertProduct,
@@ -14,6 +15,7 @@ import {
   type CatalogProduct,
 } from '@/lib/catalog-store';
 import { announceProductUpdate } from '@/lib/telegram/announce';
+import { TOOLS_CATEGORY } from '@/lib/tools-category';
 
 export const dynamic = 'force-dynamic';
 
@@ -56,6 +58,9 @@ export async function POST(request: Request) {
   if (!body.category?.trim()) {
     return NextResponse.json({ error: 'Category required' }, { status: 400 });
   }
+  if (body.category === TOOLS_CATEGORY.slug) {
+    await ensureToolsCategory();
+  }
 
   const category = await getCategoryBySlug(body.category);
   if (!category) {
@@ -94,6 +99,9 @@ export async function PUT(request: Request) {
   }
 
   if (body.category) {
+    if (body.category === TOOLS_CATEGORY.slug) {
+      await ensureToolsCategory();
+    }
     const category = await getCategoryBySlug(body.category);
     if (!category) {
       return NextResponse.json({ error: 'Unknown category' }, { status: 400 });
